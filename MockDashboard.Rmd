@@ -1,0 +1,146 @@
+---
+title: "Portfolio Dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+library(dygraphs)
+library(quantmod)
+library(flexdashboard)
+library(PerformanceAnalytics)
+library(tidyquant)
+library(tidyverse)
+library(timetk)
+library(dplyr)
+library(plotly)
+library(scales)
+require(knitr)
+
+
+symbols <- c("AAPL", "DIS", "TSLA", "XOP", "JETS")
+getSymbols(c("AAPL", "DIS", "TSLA", "XOP", "JETS"), src = "yahoo", 
+           from = "2017-01-01", to = "2021-05-28", auto.assign = TRUE, warnings = FALSE)
+#take only adj.closing prices 
+prices <- merge(AAPL[,6], DIS[,6], TSLA[,6], XOP[,6], JETS[,6])
+prices_monthly <- to.monthly(prices, indexAt = "last", OHLC = FALSE)
+asset_returns_xts <- na.omit(Return.calculate(prices_monthly, method = "log"))
+#assign our portfolio weights 
+  w <- c(.25,.15,.2,.2,.2)
+#find the co-variance
+covaraince_matrix <- cov(asset_returns_xts)
+#compute the standard deviation for our portfolio
+sd_matrix_algebra <- sqrt(t(w) %*% covaraince_matrix %*% w)
+portfolio_sd <- round(sd_matrix_algebra * 100, 2)
+
+portfolio_returns_xts_rebalanced_monthly <- 
+  Return.portfolio(asset_returns_xts, weights = w, rebalance_on = "months") %>%
+  `colnames<-`("returns") 
+
+asset_returns_long <-  
+  prices %>% 
+  to.monthly(indexAt = "last", OHLC = FALSE) %>% 
+  tk_tbl(preserve_index = TRUE, rename_index = "date") %>%
+  gather(asset, returns, -date) %>% 
+  group_by(asset) %>%  
+  mutate(returns = (log(returns) - log(lag(returns)))) %>% 
+  na.omit()
+
+portfolio_returns_tq_rebalanced_monthly <- 
+  asset_returns_long %>%
+  tq_portfolio(assets_col  = asset, 
+               returns_col = returns,
+               weights     = w,
+               col_rename  = "returns",
+               rebalance_on = "months")
+spy_monthly_xts <- 
+    getSymbols("SPY", 
+               src = 'yahoo', 
+               from = "2017-01-01",
+               to = "2021-05-28",
+             auto.assign = TRUE, 
+             warnings = FALSE) %>% 
+    map(~Ad(get(.))) %>% 
+    reduce(merge) %>%
+    `colnames<-`("SPY") %>% 
+    to.monthly(indexAt = "last", OHLC = FALSE)
+market_returns_xts <- na.omit(Return.calculate(spy_monthly_xts, method = "log"))
+
+#data.frame for market return
+market_returns_tidy <-
+  market_returns_xts %>% 
+    tk_tbl(preserve_index = TRUE, rename_index = "date") %>% 
+    na.omit() %>%
+    select(date, returns = SPY)
+
+portfolio_returns_tq_rebalanced_monthly %>% 
+  mutate(market_returns = market_returns_tidy$returns) %>%
+  head()
+
+portfolio_beta <- round(cov(portfolio_returns_xts_rebalanced_monthly,market_returns_tidy$returns)/var(market_returns_tidy$returns), 3)
+```
+
+Row {data-width = 150}
+-----------------------------------------------------------------------
+
+### Monthly Standard Deviation
+
+```{r}
+valueBox(value = portfolio_sd, icon = "fa-calendar-alt", color = "teal")
+```
+
+### Portfolio Beta
+
+```{r}
+valueBox(value = portfolio_beta, icon = "fa-black-tie", color = "coral")
+```
+
+### Rebalancing Monthly Avg Return
+
+```{r}
+valueBox(value = round(mean(portfolio_returns_xts_rebalanced_monthly)*100, 2), icon = "fa-briefcase", color = "maroon")
+```
+
+Column {data-width=850}
+-----------------------------------------------------------------------
+
+
+
+```{r}
+#CAPM tidyverse good for visualization
+asset_returns_long %>% 
+  group_by(asset) %>% 
+  summarise(expected_return = mean(returns),
+            stand_dev = sd(returns)) %>% 
+  ggplot(aes(x = stand_dev, y = expected_return, color = asset)) +
+  geom_point(size = 2) +
+  geom_point(aes(x = sd(portfolio_returns_tq_rebalanced_monthly$returns),  
+                 y = mean(portfolio_returns_tq_rebalanced_monthly$returns)), 
+             color = "cornflowerblue", 
+             size = 3) +
+  geom_text(
+            aes(x = sd(portfolio_returns_tq_rebalanced_monthly$returns) * 1.09, 
+                y = mean(portfolio_returns_tq_rebalanced_monthly$returns), 
+                label = "portfolio")) +
+  ylab("expected return") +
+  xlab("standard deviation") +
+  ggtitle("Expected Monthly Returns v. Risk") +
+  scale_y_continuous(labels = function(x){ paste0(x, "%")}) 
+```
+
+
+```{r}
+
+```
+
+```{r}
+
+
+```
+
+
+
+
+
