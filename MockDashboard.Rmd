@@ -4,6 +4,7 @@ output:
   flexdashboard::flex_dashboard:
     orientation: rows
     vertical_layout: fill
+    source_code: embed
 ---
 
 ```{r setup, include=FALSE}
@@ -17,18 +18,21 @@ library(timetk)
 library(dplyr)
 library(plotly)
 library(scales)
+
 require(knitr)
 
 
-symbols <- c("AAPL", "DIS", "TSLA", "XOP", "JETS")
-getSymbols(c("AAPL", "DIS", "TSLA", "XOP", "JETS"), src = "yahoo", 
-           from = "2017-01-01", to = "2021-05-28", auto.assign = TRUE, warnings = FALSE)
+symbols <- c("AAPL", "AMZN", "TSLA", "XOP", "JETS")
+getSymbols(c("AAPL", "AMZN", "TSLA", "XOP", "JETS"), src = "yahoo", 
+           from = "2017-01-01", get = "stock.prices", auto.assign = TRUE, warnings = FALSE)
 #take only adj.closing prices 
-prices <- merge(AAPL[,6], DIS[,6], TSLA[,6], XOP[,6], JETS[,6])
+prices <- merge(AAPL[,6], AMZN[,6], TSLA[,6], XOP[,6], JETS[,6])
+class(prices)
+
 prices_monthly <- to.monthly(prices, indexAt = "last", OHLC = FALSE)
 asset_returns_xts <- na.omit(Return.calculate(prices_monthly, method = "log"))
 #assign our portfolio weights 
-  w <- c(.25,.15,.2,.2,.2)
+w <- as.numeric(c(.25,.15,.2,.2,.2))
 #find the co-variance
 covaraince_matrix <- cov(asset_returns_xts)
 #compute the standard deviation for our portfolio
@@ -59,7 +63,7 @@ spy_monthly_xts <-
     getSymbols("SPY", 
                src = 'yahoo', 
                from = "2017-01-01",
-               to = "2021-05-28",
+               #to = "2021-05-28",
              auto.assign = TRUE, 
              warnings = FALSE) %>% 
     map(~Ad(get(.))) %>% 
@@ -80,10 +84,24 @@ portfolio_returns_tq_rebalanced_monthly %>%
   head()
 
 portfolio_beta <- round(cov(portfolio_returns_xts_rebalanced_monthly,market_returns_tidy$returns)/var(market_returns_tidy$returns), 3)
+
+#Overall return of portfolio over horizon
+market_cum_returns <- cumprod(1 + market_returns_tidy$returns)
+portfolio_cum_returns <- cumprod(1 + portfolio_returns_tq_rebalanced_monthly$returns)
+portfolio_plot <- cbind(portfolio_cum_returns,portfolio_returns_tq_rebalanced_monthly, market_cum_returns)
+
+#compute the portfolio composition
+portfolio_weight <- cbind(w, symbols)
+as.numeric(w)
+weight_p <- data.frame(portfolio_weight)
+str(weight_p)
 ```
 
-Row {data-width = 150}
------------------------------------------------------------------------
+
+Dash {data-icon="fa-globe"}
+=============================
+Row {data-width=150}
+--------------------------------------
 
 ### Monthly Standard Deviation
 
@@ -103,13 +121,30 @@ valueBox(value = portfolio_beta, icon = "fa-black-tie", color = "coral")
 valueBox(value = round(mean(portfolio_returns_xts_rebalanced_monthly)*100, 2), icon = "fa-briefcase", color = "maroon")
 ```
 
-Column {data-width=850}
------------------------------------------------------------------------
+Row
+----------------------------------
 
-
-
+### Total Asset return
 ```{r}
-#CAPM tidyverse good for visualization
+asset_returns_long %>%
+  mutate(returns = if_else(date == "2017-01-01", 0, returns)) %>%
+  group_by(asset) %>%  # Need to group multiple stocks
+  mutate(cr = cumprod(1 + returns)) %>%
+  mutate(cumulative_returns = cr - 1) %>%
+  ggplot(aes(x = date, y = cumulative_returns, color = asset)) +
+  geom_line() +
+  labs(x = "Date", y = "Cumulative Returns") +
+  ggtitle("Individual Stock Performance") +
+  scale_y_continuous(breaks = seq(0,20,2),
+                     labels = scales::percent) +
+  scale_color_brewer(palette = "Set1",
+                     name = "") +
+  theme_bw()
+
+```
+
+### CAPM tidyverse good for visualization
+```{r}
 asset_returns_long %>% 
   group_by(asset) %>% 
   summarise(expected_return = mean(returns),
@@ -121,26 +156,39 @@ asset_returns_long %>%
              color = "cornflowerblue", 
              size = 3) +
   geom_text(
-            aes(x = sd(portfolio_returns_tq_rebalanced_monthly$returns) * 1.09, 
+            aes(x = sd(portfolio_returns_tq_rebalanced_monthly$returns), 
                 y = mean(portfolio_returns_tq_rebalanced_monthly$returns), 
                 label = "portfolio")) +
   ylab("expected return") +
   xlab("standard deviation") +
   ggtitle("Expected Monthly Returns v. Risk") +
-  scale_y_continuous(labels = function(x){ paste0(x, "%")}) 
+  scale_y_continuous(labels = function(x){ paste0(x, "%")})
+
 ```
 
+Page 2
+===
+Row
+-----------------------------------------------------------------------
+
+### Portfolio Pie Chart
 
 ```{r}
-
+plot_ly(data = weight_p, labels = ~symbols, values = ~w, type = "pie") %>%
+  layout(title = "Portfolio Composition")
 ```
+
+### Market vs Portfolio
 
 ```{r}
-
+plot_ly(data = portfolio_plot, x = ~date) %>%
+add_trace(y = portfolio_cum_returns, name = "Portfolio", type = "scatter",
+          mode = 'lines') %>%
+add_trace(y = market_cum_returns, name = "Market", type = "scatter",
+          mode = "lines") %>%
+  layout(title = "Market vs Portfolio growth of $1 invested")
 
 ```
-
-
 
 
 
